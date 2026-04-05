@@ -89,6 +89,6 @@ python tests/test_pawpal.py
 
 ### Confidence level
 
-⭐⭐⭐⭐ 4 / 5
+4 / 5
 
 The core scheduling logic — priority sorting, species filtering, time-window fitting, and cache invalidation — is fully tested and all 15 tests pass. One star held back because there is no test for multi-day recurrence with real dates, and the `preferred_hour` behavior when multiple tasks compete for the same slot could use more coverage.
