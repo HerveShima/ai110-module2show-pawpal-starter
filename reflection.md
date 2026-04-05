@@ -4,13 +4,92 @@
 
 **a. Initial design**
 
-- Briefly describe your initial UML design.
-- What classes did you include, and what responsibilities did you assign to each?
+I am designing **PawPal+**, a pet care planning assistant that helps an owner schedule daily care tasks for their pet(s) based on priority, duration, and time constraints.
+
+The four core classes I identified are:
+
+| Class | Responsibility |
+|---|---|
+| `Pet` | Stores pet identity and species-specific attributes (name, species, age, health notes). Knows nothing about scheduling — it just represents the animal. |
+| `Owner` | Stores owner identity and availability window (name, available start/end time). Acts as the top-level actor who owns pets and requests a schedule. |
+| `CareTask` | Represents a single care activity (title, duration in minutes, priority level, optional preferred time). Encapsulates the "what needs to happen" data the scheduler uses. |
+| `Scheduler` | Accepts an `Owner`, a `Pet`, and a list of `CareTask` objects and produces an ordered `DailyPlan`. Applies scheduling logic: sort by priority, fit tasks within the owner's available window, and record why each task was chosen or skipped. |
+
+**Brainstormed attributes and methods:**
+
+**`Pet`**
+- Attributes: `name: str`, `species: str`, `age: int`, `health_notes: str`
+- Methods: `summary() -> str`
+
+**`Owner`**
+- Attributes: `name: str`, `available_start: int` (hour 0–23), `available_end: int`
+- Methods: `get_available_minutes() -> int`
+
+**`CareTask`**
+- Attributes: `title: str`, `duration_minutes: int`, `priority: str` (`"low"` / `"medium"` / `"high"`), `preferred_hour: int | None`
+- Methods: `priority_value() -> int` (maps string to sortable int), `__repr__() -> str`
+
+**`Scheduler`**
+- Attributes: `owner: Owner`, `pet: Pet`, `tasks: list[CareTask]`
+- Methods: `build_plan() -> list[dict]` (returns ordered schedule with start times and rationale), `explain_plan() -> str`
+
+**Mermaid.js class diagram (generated with AI assistance):**
+
+```mermaid
+classDiagram
+    class Pet {
+        +str name
+        +str species
+        +int age
+        +str health_notes
+        +summary() str
+    }
+
+    class Owner {
+        +str name
+        +int available_start
+        +int available_end
+        +get_available_minutes() int
+    }
+
+    class CareTask {
+        +str title
+        +int duration_minutes
+        +str priority
+        +int preferred_hour
+        +priority_value() int
+        +__repr__() str
+    }
+
+    class Scheduler {
+        +Owner owner
+        +Pet pet
+        +list tasks
+        +build_plan() list
+        +explain_plan() str
+    }
+
+    Owner "1" --> "1..*" Pet : owns
+    Owner "1" --> "1" Scheduler : requests schedule from
+    Scheduler "1" --> "1" Pet : schedules for
+    Scheduler "1" o-- "0..*" CareTask : manages
+```
 
 **b. Design changes**
 
-- Did your design change during implementation?
-- If yes, describe at least one change and why you made it.
+Yes — after asking AI to review `pawpal_system.py` for missing relationships and logic bottlenecks, I made four changes:
+
+1. **Added `ScheduledEntry` dataclass.**
+   The original `build_plan()` returned `list[dict]`. The AI flagged this as a hidden-coupling bottleneck: `explain_plan()` would have to silently know the exact dict keys. Replacing the dict with a typed `ScheduledEntry` dataclass (`task`, `start_hour`, `start_minute`, `reason`) makes the contract explicit and prevents key-name bugs.
+
+2. **Added `species_filter` to `CareTask`.**
+   The AI noticed there was no way to express that some tasks only apply to certain species (e.g., "litter box" = cats only). Adding `species_filter: str | None = None` lets the scheduler skip irrelevant tasks without extra logic in the caller.
+
+3. **Removed `__repr__` stub from `CareTask`.**
+   `@dataclass` auto-generates `__repr__`. Keeping a `pass` stub silently overrides that auto-generated version and returns `None` until implemented — a subtle runtime bug. The AI caught this; I removed the stub and let the dataclass handle it.
+
+4. **Added `self._plan` cache to `Scheduler`.**
+   The original design had `build_plan()` and `explain_plan()` as independent methods. Calling both would run the scheduling algorithm twice. Adding a `_plan` cache means scheduling runs once and `explain_plan()` reuses the result.
 
 ---
 
