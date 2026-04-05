@@ -132,8 +132,8 @@ class Owner:
         return False
 
     def get_available_minutes(self) -> int:
-        """Return the total minutes available within the owner's window."""
-        return (self.available_end - self.available_start) * 60
+        """Return the total minutes available within the owner's window (0 if window is invalid)."""
+        return max(0, (self.available_end - self.available_start) * 60)
 
     def get_all_tasks(self) -> list[tuple[Pet, CareTask]]:
         """Return all (pet, task) pairs across every owned pet."""

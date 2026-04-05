@@ -34,23 +34,29 @@ with st.form("owner_form"):
         avail_end = st.number_input("Available until (hour)", min_value=1, max_value=24, value=20)
 
     if st.form_submit_button("Save owner"):
-        # Only create a new Owner if none exists yet, or if the name changed.
-        # This preserves any pets/tasks already added during the session.
-        if (st.session_state.owner is None
-                or st.session_state.owner.name != owner_name):
-            st.session_state.owner = Owner(
-                name=owner_name,
-                available_start=int(avail_start),
-                available_end=int(avail_end),
+        if int(avail_end) <= int(avail_start):
+            st.error(
+                f"'Available until' ({int(avail_end):02d}:00) must be later than "
+                f"'Available from' ({int(avail_start):02d}:00). Please fix the window."
             )
-            st.session_state.scheduler = None   # reset scheduler on new owner
         else:
-            # Update window without losing pets
-            st.session_state.owner.available_start = int(avail_start)
-            st.session_state.owner.available_end   = int(avail_end)
-            st.session_state.scheduler = None
+            # Only create a new Owner if none exists yet, or if the name changed.
+            # This preserves any pets/tasks already added during the session.
+            if (st.session_state.owner is None
+                    or st.session_state.owner.name != owner_name):
+                st.session_state.owner = Owner(
+                    name=owner_name,
+                    available_start=int(avail_start),
+                    available_end=int(avail_end),
+                )
+                st.session_state.scheduler = None   # reset scheduler on new owner
+            else:
+                # Update window without losing pets
+                st.session_state.owner.available_start = int(avail_start)
+                st.session_state.owner.available_end   = int(avail_end)
+                st.session_state.scheduler = None
 
-        st.success(f"Owner saved: {owner_name}  |  window {int(avail_start):02d}:00 – {int(avail_end):02d}:00")
+            st.success(f"Owner saved: {owner_name}  |  window {int(avail_start):02d}:00 – {int(avail_end):02d}:00")
 
 if st.session_state.owner is None:
     st.info("Fill in the owner form above to get started.")
@@ -166,31 +172,115 @@ st.divider()
 # ---------------------------------------------------------------------------
 st.subheader("4. Today's schedule")
 
-if st.button("Generate schedule"):
+col_gen, col_reset = st.columns([2, 1])
+with col_gen:
+    generate = st.button("Generate schedule", use_container_width=True)
+with col_reset:
+    reset = st.button("Reset day", use_container_width=True)
+
+if reset and st.session_state.scheduler:
+    st.session_state.scheduler.reset_day()
+    st.session_state.scheduler = None
+    st.success("Day reset — all tasks are pending again.")
+
+if generate:
     if not owner.pets or not owner.get_all_tasks():
         st.warning("Add at least one pet and one task first.")
     else:
-        # Build a fresh Scheduler and cache it
         st.session_state.scheduler = Scheduler(owner)
-        plan = st.session_state.scheduler.build_plan()
 
-        if not plan:
-            st.error("No tasks could fit within the availability window.")
+if st.session_state.scheduler:
+    scheduler: Scheduler = st.session_state.scheduler
+    plan = scheduler.build_plan()
+
+    # ── Summary metrics ──────────────────────────────────────────────────────
+    all_pending  = owner.get_all_pending_tasks()
+    scheduled_keys = {id(e.task) for e in plan}
+    skipped = [
+        (pet, task) for pet, task in all_pending
+        if id(task) not in scheduled_keys
+    ]
+    total_min = sum(e.task.duration_minutes for e in plan)
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Scheduled", len(plan))
+    m2.metric("Skipped",   len(skipped))
+    m3.metric("Time used", f"{total_min} min")
+    m4.metric("Window",    f"{owner.get_available_minutes()} min")
+
+    st.divider()
+
+    # ── Scheduled tasks table ────────────────────────────────────────────────
+    if not plan:
+        st.error("No tasks could fit within the availability window.")
+    else:
+        st.success(f"{len(plan)} task(s) scheduled for {owner.name}.")
+
+        priority_badge = {"high": "🔴 HIGH", "medium": "🟡 MED", "low": "🟢 LOW"}
+        rows = [
+            {
+                "Time":          entry.start_time_str(),
+                "Pet":           entry.pet.name,
+                "Task":          entry.task.title,
+                "Priority":      priority_badge.get(entry.task.priority, entry.task.priority),
+                "Duration (min)": entry.task.duration_minutes,
+                "Frequency":     entry.task.frequency,
+                "Why scheduled": entry.reason,
+            }
+            for entry in plan
+        ]
+        st.table(rows)
+
+    # ── Skipped / conflict warnings ──────────────────────────────────────────
+    if skipped:
+        st.warning(
+            f"**{len(skipped)} task(s) could not be scheduled today.** "
+            "Each one was either too long to fit in the remaining window "
+            "or excluded by a species filter."
+        )
+        for pet, task in skipped:
+            # Work out the specific reason so the owner knows what to fix
+            window_min   = owner.get_available_minutes()
+            species_mismatch = (
+                task.species_filter is not None
+                and task.species_filter.lower() != pet.species.lower()
+            )
+            if species_mismatch:
+                reason = (
+                    f"Species filter — this task is set to **{task.species_filter}** "
+                    f"only, but {pet.name} is a **{pet.species}**."
+                )
+            elif task.duration_minutes > window_min:
+                reason = (
+                    f"Task takes **{task.duration_minutes} min** but the entire "
+                    f"window is only **{window_min} min**."
+                )
+            else:
+                reason = (
+                    f"Not enough time left after higher-priority tasks "
+                    f"({task.duration_minutes} min needed)."
+                )
+
+            with st.expander(f"⚠️  {task.title}  —  {pet.name}  [{task.priority.upper()}]"):
+                st.write(f"**Why skipped:** {reason}")
+                st.write(
+                    f"**Fix:** "
+                    + ("Correct the species filter in the task settings."
+                       if species_mismatch else
+                       "Shorten the task, widen the availability window, or lower "
+                       "the priority of longer tasks so this one fits.")
+                )
+
+    # ── Mark tasks complete ──────────────────────────────────────────────────
+    if plan:
+        st.divider()
+        st.subheader("Mark tasks done")
+        pending_in_plan = [e for e in plan if not e.task.completed]
+        if not pending_in_plan:
+            st.success("All scheduled tasks are complete — great work!")
         else:
-            st.success(f"{len(plan)} task(s) scheduled for {owner.name}.")
-            rows = [
-                {
-                    "Time": entry.start_time_str(),
-                    "Pet": entry.pet.name,
-                    "Task": entry.task.title,
-                    "Duration (min)": entry.task.duration_minutes,
-                    "Priority": entry.task.priority.upper(),
-                    "Frequency": entry.task.frequency,
-                    "Reason": entry.reason,
-                }
-                for entry in plan
-            ]
-            st.table(rows)
-
-            total = sum(e.task.duration_minutes for e in plan)
-            st.caption(f"Total scheduled time: {total} min")
+            for entry in pending_in_plan:
+                label = f"{entry.start_time_str()}  {entry.task.title} ({entry.pet.name})"
+                if st.button(f"✓  {label}", key=f"done_{id(entry.task)}"):
+                    scheduler.mark_complete(entry.task.title)
+                    st.rerun()
