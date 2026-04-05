@@ -226,7 +226,7 @@ class Scheduler:
 
         for pet, task in candidates:
             if current_minutes + task.duration_minutes > end_minutes:
-                break   # no more time; remaining tasks are skipped
+                continue   # task too long for remaining time; try a shorter one
 
             # Honour preferred_hour: if preferred start hasn't passed yet,
             # jump forward to it (never backwards)
@@ -236,7 +236,7 @@ class Scheduler:
                     current_minutes = preferred_start
 
             if current_minutes + task.duration_minutes > end_minutes:
-                break
+                continue   # preferred_hour pushed it past the window; skip
 
             entry = ScheduledEntry(
                 pet=pet,
